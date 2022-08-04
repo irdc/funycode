@@ -28,7 +28,7 @@ Without compression, this would translate to the following 315-character long fu
 
 With compression however the result is this large but manageable 196-character string:
 
-    std1fsfilesystemlastwritetimepathconstschronopointFilClockdurationint1281ll10llerrorcode_pq150b0400d8x2f2a1L2c02M0300i00D0P3H060n311Xy00J050R0600I00Q0cxqsq3Oq7YrchtPov2mvMTr5DyEnLxys0frbwwK7w9Byz4
+    std1fsfilesystemlastwritetimepathconstschronopointFilClockdurationint1281ll10llerrorcode_pq150b0400d8x2f2a1L2c02M0300i00D0P3H060n311Xy00J050R0600I00Q02yztv5Oq7YrchtPov2mvMTr5DyEnLxys0frbwwK7w9Byz4
 
 Typically, compression results in output strings that are around 98% of their unencoded equivalents; without compression that would be around 125%.
 
