@@ -62,9 +62,15 @@ main(int argc, char *const *argv)
 		while (line[linelen - 1] == '\n')
 			line[--linelen] = '\0';
 
-		namelen = (eflag ? funencode : fundecode)(name, namecap, line, linelen);
-		while (namelen > namecap) {
+		while (1) {
 			void *new;
+
+			namelen = (eflag ? funencode : fundecode)(name, namecap, line, linelen);
+			if (namelen == FUNYCODE_ERR)
+				err(1, eflag ? "funencode" : "fundecode");
+
+			if (namelen <= namecap)
+				break;
 
 			namecap = namecap == 0 ? 64 : (namecap * 2);
 			if (namecap > UINT16_MAX)
@@ -75,8 +81,6 @@ main(int argc, char *const *argv)
 				err(1, "realloc");
 	
 			name = new;
-
-			namelen = (eflag ? funencode : fundecode)(name, namecap, line, linelen);
 		}
 
 		printf("%s\n", name);
