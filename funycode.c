@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 Willemijn Coene
+ * Copyright (c) 2022, 2023 Willemijn Coene
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -149,19 +149,30 @@ codecmp(const void *a, const void *b)
 	return cmp;
 }
 
+/* FNV hash (see http://www.isthe.com/chongo/tech/comp/fnv/) */
+#if SIZE_MAX == UINT32_MAX
+# define FNVHASH	uint32_t
+# define FNVBASIS	0x811c9dc5
+# define FNVPRIME	0x01000193
+#else
+# define FNVHASH	uint64_t
+# define FNVBASIS	0xcbf29ce484222325ULL
+# define FNVPRIME	0x100000001b3ULL
+#endif
+
 static unsigned int
 hash(const wchar_t *buf, size_t len)
 {
 	size_t i;
-	unsigned int h = 0;
+	FNVHASH h = FNVBASIS;
 
 	if (len < MINCOPY)
-		return 0;
+		return h;
 
 	for (i = 0; i < MINCOPY; i++)
-		h = (h * 33) + buf[i];
+		h = (h ^ buf[i]) * FNVPRIME;
 
-	return h;
+	return (int) h;
 }
 
 static size_t
