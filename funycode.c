@@ -369,13 +369,14 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 		}
 
 		/*
-		 * Generate the suffix
+		 * Generate the suffix. If we don't have a prefix, make sure
+		 * the suffix never starts with a digit.
 		 */
 
 		if (plen != 0)
 			out(enc, enclen, encpos++, '_');
 
-		last = -10 * (rlen + 1);
+		last = plen == 0 ? -10 * (rlen + 1) : 0;
 		for (i = 0; i < ncodes; i++) {
 			sym = codes[i].wc * (rlen + 1) + codes[i].pos;
 			encpos += encode(enc + encpos, satsub(enclen, encpos), sym - last);
@@ -497,10 +498,11 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 		wout(wname, wnamelen, namepos++, enc[i]);
 
 	/*
-	 * Insert all encoded characters.
+	 * Insert all encoded characters. Handle the fact that a suffix
+	 * without a prefix can never start with a digit.
 	 */
 
-	last = -10 * (namepos + 1);
+	last = plen == 0 ? -10 * (namepos + 1) : 0;
 	while (encpos < enclen) {
 		size_t len;
 		intmax_t sym;
