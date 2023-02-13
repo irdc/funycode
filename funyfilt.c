@@ -69,7 +69,7 @@ main(int argc, char *const *argv)
 			if (namelen == FUNYCODE_ERR)
 				err(1, eflag ? "funencode" : "fundecode");
 
-			if (namelen <= namecap)
+			if (namelen < namecap)
 				break;
 
 			namecap = namecap == 0 ? 64 : (namecap * 2);
