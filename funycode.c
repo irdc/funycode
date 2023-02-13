@@ -31,6 +31,13 @@
 
 #define BASE		62
 
+#define OUT(buf, len, pos, val)                                             \
+	do {                                                                \
+		size_t p_ = (pos);                                          \
+		int v_ = (val);                                             \
+		if (p_ < (len))                                             \
+			(buf)[p_] = v_;                                     \
+	} while (0)
 
 /*
  * Compress symbols using a simple algorithm based on LSRW1-A. Abuse
@@ -96,9 +103,7 @@ compress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 	while (srcpos + MINCOPY < srclen && srcpos < MINCOPY) {
 		int h;
 
-		if (dstpos < dstlen)
-			dst[dstpos] = src[srcpos];
-
+		OUT(dst, dstlen, dstpos, src[srcpos]);
 		h = hash(src + srcpos) % nitems(htab);
 		htab[h] = srcpos++;
 		dstpos++;
@@ -112,13 +117,10 @@ compress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 		if (srcpos - htab[h] >= MINDIST &&
 		    srcpos - htab[h] <= MAXDIST &&
 		    (len = prefix(src, srclen, srcpos, htab[h])) >= MINCOPY) {
-			if (dstpos < dstlen)
-				dst[dstpos] = BACKREF +
-				    (len - MINCOPY) +
-				    ((srcpos - htab[h] - MINDIST) << COPYBITS);
+			OUT(dst, dstlen, dstpos, BACKREF + (len - MINCOPY) +
+			    ((srcpos - htab[h] - MINDIST) << COPYBITS));
 		} else {
-			if (dstpos < dstlen)
-				dst[dstpos] = src[srcpos];
+			OUT(dst, dstlen, dstpos, src[srcpos]);
 			len = 1;
 		}
 
@@ -134,12 +136,8 @@ compress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 		}
 	}
 
-	while (srcpos < srclen) {
-		if (dstpos < dstlen)
-			dst[dstpos] = src[srcpos];
-		srcpos++;
-		dstpos++;
-	}
+	while (srcpos < srclen)
+		OUT(dst, dstlen, dstpos++, src[srcpos++]);
 
 	return dstpos;
 }
@@ -160,16 +158,10 @@ decompress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 			pos = dstpos - (((ch & DISTMASK) >> COPYBITS) + MINDIST);
 			len = (ch & COPYMASK) + MINCOPY;
 
-			while (len-- > 0) {
-				if (dstpos < dstlen)
-					dst[dstpos] = dst[pos];
-				dstpos++;
-				pos++;
-			}
+			while (len-- > 0)
+				OUT(dst, dstlen, dstpos++, dst[pos++]);
 		} else {
-			if (dstpos < dstlen)
-				dst[dstpos] = ch;
-			dstpos++;
+			OUT(dst, dstlen, dstpos++, ch);
 		}
 	}
 
@@ -197,20 +189,6 @@ tresh(size_t pos)
 	return pos == 0 ? 2 : 52;
 }
 
-static void
-out(char *buf, size_t len, size_t pos, char ch)
-{
-	if (pos < len)
-		buf[pos] = ch;
-}
-
-static void
-wout(wchar_t *buf, size_t len, size_t pos, wchar_t ch)
-{
-	if (pos < len)
-		buf[pos] = ch;
-}
-
 
 /*
  * Encode val as a base 62 digit.
@@ -222,11 +200,11 @@ put(char *buf, size_t len, int val)
 	assert(val >= 0 && val <= BASE - 1);
 
 	if (val >= 0 && val <= 9)
-		out(buf, len, 0, val + '0');
+		OUT(buf, len, 0, val + '0');
 	else if (val >= 10 && val <= 35)
-		out(buf, len, 0, val - 10 + 'A');
+		OUT(buf, len, 0, val - 10 + 'A');
 	else if (val >= 36 && val <= 61)
-		out(buf, len, 0, val - 36 + 'a');
+		OUT(buf, len, 0, val - 36 + 'a');
 }
 
 
@@ -322,7 +300,7 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 	encpos = 0;
 	for (namepos = 0; namepos < namelen; namepos++) {
 		if (isname(wname[namepos])) {
-			out(enc, enclen, encpos++, wctob(wname[namepos]));
+			OUT(enc, enclen, encpos++, wctob(wname[namepos]));
 		} else {
 			if (ncodes >= maxcodes) {
 				struct code *new;
@@ -374,7 +352,7 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 		 */
 
 		if (plen != 0)
-			out(enc, enclen, encpos++, '_');
+			OUT(enc, enclen, encpos++, '_');
 
 		last = plen == 0 ? -10 * (rlen + 1) : 0;
 		for (i = 0; i < ncodes; i++) {
@@ -385,13 +363,13 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 		}
 
 		if (plen == 0)
-			out(enc, enclen, encpos++, '_');
+			OUT(enc, enclen, encpos++, '_');
 
 		free(codes);
 		codes = NULL;
 	}
 
-	out(enc, enclen, encpos, '\0');
+	OUT(enc, enclen, encpos, '\0');
 
 	return encpos;
 
@@ -495,7 +473,7 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 	}
 
 	for (i = 0; i < plen; i++)
-		wout(wname, wnamelen, namepos++, enc[i]);
+		OUT(wname, wnamelen, namepos++, enc[i]);
 
 	/*
 	 * Insert all encoded characters. Handle the fact that a suffix
@@ -554,7 +532,7 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 		goto fail;
 
 	free(wname);
-	out(name, namelen, i, '\0');
+	OUT(name, namelen, i, '\0');
 
 	return plen;
 
