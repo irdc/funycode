@@ -31,6 +31,13 @@
 
 #define BASE		62
 
+
+/*
+ * Compress symbols using a simple algorithm based on LSRW1-A. Abuse
+ * surrogate pairs (which should never occur in well-formed input anyway)
+ * for encoding matches.
+ */
+
 #define BACKREF		0xd800
 
 #define COPYBITS	4
@@ -43,18 +50,139 @@
 #define MINDIST		1
 #define MAXDIST		((1 << DISTBITS) - 1 + MINDIST)
 
+/* FNV hash (see http://www.isthe.com/chongo/tech/comp/fnv/) */
+#if SIZE_MAX == UINT32_MAX
+# define FNVHASH	uint32_t
+# define FNVBASIS	0x811c9dc5
+# define FNVPRIME	0x01000193
+#else
+# define FNVHASH	uint64_t
+# define FNVBASIS	0xcbf29ce484222325ULL
+# define FNVPRIME	0x100000001b3ULL
+#endif
+
+static int
+hash(const wchar_t *buf)
+{
+	size_t i;
+	FNVHASH h = FNVBASIS;
+
+	for (i = 0; i < MINCOPY - 1; i++)
+		h = (h ^ buf[i]) * FNVPRIME;
+
+	return (int) h;
+}
+
+static size_t
+prefix(const wchar_t *src, size_t srclen, size_t a, size_t b)
+{
+	size_t len;
+
+	for (len = 0;
+	     len < MAXCOPY && a + len < srclen && b + len < srclen;
+	     len++)
+		if (src[a + len] != src[b + len])
+			break;
+
+	return len;
+}
+
+static size_t
+compress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
+{
+	size_t srcpos, dstpos, htab[512];
+
+	srcpos = dstpos = 0;
+	while (srcpos + MINCOPY < srclen && srcpos < MINCOPY) {
+		int h;
+
+		if (dstpos < dstlen)
+			dst[dstpos] = src[srcpos];
+
+		h = hash(src + srcpos) % nitems(htab);
+		htab[h] = srcpos++;
+		dstpos++;
+	}
+
+	while (srcpos + MINCOPY < srclen) {
+		int h;
+		size_t len;
+
+		h = hash(src + srcpos) % nitems(htab);
+		if (srcpos - htab[h] >= MINDIST &&
+		    srcpos - htab[h] <= MAXDIST &&
+		    (len = prefix(src, srclen, srcpos, htab[h])) >= MINCOPY) {
+			if (dstpos < dstlen)
+				dst[dstpos] = BACKREF +
+				    (len - MINCOPY) +
+				    ((srcpos - htab[h] - MINDIST) << COPYBITS);
+		} else {
+			if (dstpos < dstlen)
+				dst[dstpos] = src[srcpos];
+			len = 1;
+		}
+
+		dstpos++;
+
+		while (1) {
+			htab[h] = srcpos++;
+
+			if (--len == 0)
+				break;
+
+			h = hash(src + srcpos) % nitems(htab);
+		}
+	}
+
+	while (srcpos < srclen) {
+		if (dstpos < dstlen)
+			dst[dstpos] = src[srcpos];
+		srcpos++;
+		dstpos++;
+	}
+
+	return dstpos;
+}
+
+static size_t
+decompress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
+{
+	size_t srcpos, dstpos;
+
+	srcpos = dstpos = 0;
+	while (srcpos < srclen) {
+		wchar_t ch;
+
+		ch = src[srcpos++];
+		if ((ch & ~(COPYMASK | DISTMASK)) == BACKREF) {
+			size_t pos, len;
+
+			pos = dstpos - (((ch & DISTMASK) >> COPYBITS) + MINDIST);
+			len = (ch & COPYMASK) + MINCOPY;
+
+			while (len-- > 0) {
+				if (dstpos < dstlen)
+					dst[dstpos] = dst[pos];
+				dstpos++;
+				pos++;
+			}
+		} else {
+			if (dstpos < dstlen)
+				dst[dstpos] = ch;
+			dstpos++;
+		}
+	}
+
+	return dstpos;
+}
+
+
 static bool
 isname(wchar_t wc)
 {
 	return (wc >= L'0' && wc <= L'9') ||
 	       (wc >= L'A' && wc <= L'Z') ||
 	       (wc >= L'a' && wc <= L'z');
-}
-
-static bool
-isbackref(wchar_t wc)
-{
-	return wc >= BACKREF && wc <= (BACKREF | COPYMASK | DISTMASK);
 }
 
 static size_t
@@ -149,54 +277,13 @@ codecmp(const void *a, const void *b)
 	return cmp;
 }
 
-/* FNV hash (see http://www.isthe.com/chongo/tech/comp/fnv/) */
-#if SIZE_MAX == UINT32_MAX
-# define FNVHASH	uint32_t
-# define FNVBASIS	0x811c9dc5
-# define FNVPRIME	0x01000193
-#else
-# define FNVHASH	uint64_t
-# define FNVBASIS	0xcbf29ce484222325ULL
-# define FNVPRIME	0x100000001b3ULL
-#endif
-
-static unsigned int
-hash(const wchar_t *buf, size_t len)
-{
-	size_t i;
-	FNVHASH h = FNVBASIS;
-
-	if (len < MINCOPY)
-		return h;
-
-	for (i = 0; i < MINCOPY; i++)
-		h = (h ^ buf[i]) * FNVPRIME;
-
-	return (int) h;
-}
-
-static size_t
-cmp(const wchar_t *buf, size_t len, size_t a, size_t b)
-{
-	size_t i;
-
-	if (a == b || len - a < MINCOPY || len - b < MINCOPY)
-		return 0;
-
-	for (i = 0; i < MAXCOPY && a + i < len && b + i < len; i++)
-		if (buf[a + i] != buf[b + i])
-			break;
-
-	return i;
-}
-
 size_t
 funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
     locale_t loc)
 {
 	mbstate_t mbs;
 	wchar_t *wname = NULL, *wbuf = NULL;
-	size_t namepos, encpos, htab[512] = { 0 };
+	size_t namepos, encpos;
 	struct code *codes = NULL;
 	int ncodes = 0, maxcodes = 0;
 
@@ -221,30 +308,10 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 	if (wbuf == NULL)
 		goto fail;
 
-	encpos = 0;
-	for (namepos = 0; namepos < namelen; ) {
-		unsigned int h;
-		size_t len;
-
-		h = hash(wname + namepos, satsub(namelen, namepos)) % nitems(htab);
-		if (namepos - htab[h] <= MAXDIST &&
-		    (len = cmp(wname, namelen, htab[h], namepos)) >= MINCOPY) {
-			wbuf[encpos++] = BACKREF +
-			    (len - MINCOPY) +
-			    ((namepos - htab[h] - MINDIST) << COPYBITS);
-		} else {
-			wbuf[encpos++] = wname[namepos];
-			len = 1;
-		}
-
-		htab[h] = namepos;
-		namepos += len;
-	}
-
+	namelen = compress(wbuf, namelen, wname, namelen);
 	free(wname);
 	wname = wbuf;
 	wbuf = NULL;
-	namelen = encpos;
 
 	/*
 	 * Process all characters in the name, directly outputting all those
@@ -464,31 +531,10 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 	if (wbuf == NULL)
 		goto fail;
 
-	encpos = 0;
-	for (i = 0; i < namepos; i++) {
-		if (isbackref(wname[i])) {
-			size_t pos, len;
-
-			pos = encpos - (((wname[i] & DISTMASK) >> COPYBITS) + MINDIST);
-			len = (wname[i] & COPYMASK) + MINCOPY;
-
-			while (len-- > 0) {
-				if (encpos < wnamelen)
-					wbuf[encpos] = wbuf[pos];
-				encpos++;
-				pos++;
-			}
-		} else {
-			if (encpos < wnamelen)
-				wbuf[encpos] = wname[i];
-			encpos++;
-		}
-	}
-
+	namepos = decompress(wbuf, wnamelen, wname, namepos);
 	free(wname);
 	wname = wbuf;
 	wbuf = NULL;
-	namepos = encpos;
 
 	/*
 	 * Convert the output to wide characters.
