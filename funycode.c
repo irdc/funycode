@@ -19,13 +19,18 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <locale.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+
+#ifdef __APPLE__
+# include <xlocale.h>
+#else
+# include <locale.h>
+#endif
 
 #define nitems(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
