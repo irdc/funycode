@@ -455,7 +455,7 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 	 * only containing a prefix don't end in an underscore at all.
 	 */
 
-	p = memrchr(enc, '_', enclen);
+	p = memchr(enc, '_', enclen);
 	if (p == enc + enclen - 1) {
 		plen = 0;
 		enclen--;
