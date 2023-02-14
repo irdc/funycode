@@ -33,4 +33,11 @@ size_t		 fundecode_l(char *name, size_t namelen,
 		     const char *enc, size_t enclen, locale_t loc);
 #endif
 
+#ifdef WCHAR_MAX
+size_t		 wfunencode(char *enc, size_t enclen,
+		     const wchar_t *name, size_t namelen);
+size_t		 wfundecode(wchar_t *name, size_t namelen,
+		     const char *enc, size_t enclen);
+#endif
+
 #endif /* FUNYCODE_H */

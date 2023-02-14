@@ -287,40 +287,24 @@ codecmp(const void *a, const void *b)
 }
 
 size_t
-funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
-    locale_t loc)
+wfunencode(char *enc, size_t enclen, const wchar_t *name, size_t namelen)
 {
-	mbstate_t mbs;
-	wchar_t *wname = NULL, *wbuf = NULL;
+	wchar_t *buf = NULL;
 	size_t namepos, encpos;
 	struct code *codes = NULL;
 	int ncodes = 0, maxcodes = 0;
 
 	/*
-	 * Convert the input to wide characters.
-	 */
-
-	wname = malloc(namelen * sizeof(wchar_t));
-	if (wname == NULL)
-		goto fail;
-
-	memset(&mbs, '\0', sizeof(mbs));
-	namelen = mbsnrtowcs(wname, &name, namelen, namelen, &mbs);
-	if (namelen == (size_t) -1)
-		goto fail;
-
-	/*
 	 * Compress the input.
 	 */
 
-	wbuf = malloc(namelen * sizeof(wchar_t));
-	if (wbuf == NULL)
+	buf = malloc(namelen * sizeof(wchar_t));
+	if (buf == NULL)
 		goto fail;
 
-	namelen = compress(wbuf, namelen, wname, namelen);
-	free(wname);
-	wname = wbuf;
-	wbuf = NULL;
+	namelen = compress(buf, namelen, name, namelen);
+	if (namelen == FUNYCODE_ERR)
+		goto fail;
 
 	/*
 	 * Process all characters in the name, directly outputting all those
@@ -331,10 +315,10 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 
 	encpos = 0;
 	for (namepos = 0; namepos < namelen; namepos++) {
-		if ((wname[namepos] >= L'A' && wname[namepos] <= L'Z') ||
-		    (wname[namepos] >= L'a' && wname[namepos] <= L'z') ||
-		    (wname[namepos] >= L'0' && wname[namepos] <= L'9' && encpos != 0)) {
-			OUT(enc, enclen, encpos++, wctob(wname[namepos]));
+		if ((buf[namepos] >= L'A' && buf[namepos] <= L'Z') ||
+		    (buf[namepos] >= L'a' && buf[namepos] <= L'z') ||
+		    (buf[namepos] >= L'0' && buf[namepos] <= L'9' && encpos != 0)) {
+			OUT(enc, enclen, encpos++, wctob(buf[namepos]));
 		} else {
 			if (ncodes >= maxcodes) {
 				struct code *new;
@@ -348,14 +332,14 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 			}
 
 			codes[ncodes++] = (struct code) {
-				.wc = wname[namepos],
+				.wc = buf[namepos],
 				.pos = namepos
 			};
 		}
 	}
 
-	free(wname);
-	wname = NULL;
+	free(buf);
+	buf = NULL;
 
 	if (ncodes) {
 		size_t plen, rlen;
@@ -412,9 +396,37 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 	return encpos;
 
 fail:
-	free(wname);
-	free(wbuf);
+	free(buf);
 	free(codes);
+
+	return FUNYCODE_ERR;
+}
+
+size_t
+funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
+    locale_t loc)
+{
+	mbstate_t mbs;
+	wchar_t *wname;
+	size_t len;
+
+	wname = malloc(namelen * sizeof(wchar_t));
+	if (wname == NULL)
+		goto fail;
+
+	memset(&mbs, '\0', sizeof(mbs));
+	namelen = mbsnrtowcs(wname, &name, namelen, namelen, &mbs);
+	if (namelen == (size_t) -1)
+		goto fail;
+
+	len = wfunencode(enc, enclen, wname, namelen);
+	if (len == FUNYCODE_ERR)
+		goto fail;
+
+	return len;
+
+fail:
+	free(wname);
 
 	return FUNYCODE_ERR;
 }
@@ -477,20 +489,17 @@ decode(const char *buf, size_t len, intmax_t bias, intmax_t *delta)
 	return pos;
 }
 
-
 size_t
-fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
-    locale_t loc)
+wfundecode(wchar_t *name, size_t namelen, const char *enc, size_t enclen)
 {
-	mbstate_t mbs;
-	wchar_t *wname = NULL, *wbuf = NULL;
+	wchar_t *buf = NULL;
 	char *p;
-	size_t namepos = 0, encpos = 0, plen, wnamelen, i, len;
+	size_t buflen, namepos = 0, encpos = 0, plen, i, len;
 	intmax_t bias, last;
 
-	wnamelen = (namelen > enclen ? namelen : enclen) * 2;
-	wname = malloc(wnamelen * sizeof(wchar_t));
-	if (wname == NULL)
+	buflen = namelen > enclen * 2 ? namelen : enclen * 2;
+	buf = malloc(buflen * sizeof(wchar_t));
+	if (buf == NULL)
 		goto fail;
 
 	/*
@@ -513,7 +522,7 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 	}
 
 	for (i = 0; i < plen; i++)
-		OUT(wname, wnamelen, namepos++, enc[i]);
+		OUT(buf, buflen, namepos++, enc[i]);
 
 	/*
 	 * Insert all encoded characters. Handle the fact that a suffix
@@ -533,9 +542,9 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 			return FUNYCODE_ERR;
 
 		div = imaxdiv(delta + last, namepos + 1);
-		if (div.rem < wnamelen) {
-			wmemmove(wname + div.rem + 1, wname + div.rem, wnamelen - div.rem - 1);
-			wname[div.rem] = (wchar_t) div.quot;
+		if (div.rem < buflen) {
+			wmemmove(buf + div.rem + 1, buf + div.rem, buflen - div.rem - 1);
+			buf[div.rem] = (wchar_t) div.quot;
 		}
 
 		namepos++;
@@ -547,38 +556,53 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 	 * Decompress the result
 	 */
 
-	wbuf = malloc(wnamelen * sizeof(wchar_t));
-	if (wbuf == NULL)
+	namepos = decompress(name, namelen, buf, namepos);
+	if (namepos == FUNYCODE_ERR)
 		goto fail;
 
-	namepos = decompress(wbuf, wnamelen, wname, namepos);
-	free(wname);
-	wname = wbuf;
-	wbuf = NULL;
+	free(buf);
+	OUT(name, namelen, namepos, '\0');
 
-	/*
-	 * Convert the output to wide characters.
-	 */
+	return namepos;
+
+fail:
+	free(buf);
+
+	return FUNYCODE_ERR;
+}
+
+size_t
+fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
+    locale_t loc)
+{
+	mbstate_t mbs;
+	wchar_t *wname, *p;
+	size_t wnamelen, wlen, len;
+
+	wnamelen = namelen > enclen * 2 ? namelen : enclen * 2;
+	wname = malloc(wnamelen * sizeof(wchar_t));
+	if (wname == NULL)
+		goto fail;
+
+	wlen = wfundecode(wname, wnamelen, enc, enclen);
+	if (wlen == FUNYCODE_ERR)
+		goto fail;
 
 	memset(&mbs, '\0', sizeof(mbs));
-	wbuf = wname;
-	plen = wcsnrtombs(NULL, (const wchar_t **) &wbuf, namepos, 0, &mbs);
+	p = wname;
+	len = wcsnrtombs(NULL, (const wchar_t **) &p, wlen, 0, &mbs);
 
-	wbuf = wname;
-	i = wcsnrtombs(name, (const wchar_t **) &wbuf, namepos, namelen, &mbs);
-
-	wbuf = NULL;
-	if (i == (size_t) -1)
+	p = wname;
+	if (wcsnrtombs(name, (const wchar_t **) &p, wlen, namelen, &mbs) == (size_t) -1)
 		goto fail;
 
 	free(wname);
-	OUT(name, namelen, i, '\0');
+	OUT(name, namelen, len, '\0');
 
-	return plen;
+	return len;
 
 fail:
 	free(wname);
-	free(wbuf);
 
 	return FUNYCODE_ERR;
 }
