@@ -34,7 +34,18 @@
 
 #define nitems(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
+/*
+ * Bootstring parameters. These were empirically determined give generally
+ * good results.
+ */
+
 #define BASE		62
+#define TMIN		1
+#define TMAX		52
+#define SKEW		208
+#define DAMP		700
+#define INITIAL_BIAS	(BASE * 2 - TMAX / 2)
+#define INITIAL_N	32
 
 #define OUT(buf, len, pos, val)                                             \
 	do {                                                                \
@@ -180,10 +191,27 @@ satsub(size_t a, size_t b)
 	return a > b ? a - b : 0;
 }
 
-static int
-tresh(size_t pos)
+static intmax_t
+tresh(size_t pos, intmax_t bias)
 {
-	return pos == 0 ? 2 : 52;
+	intmax_t t;
+
+	t = (pos + 1) * BASE - bias;
+
+	return t < TMIN ? TMIN : t > TMAX ? TMAX : t;
+}
+
+static intmax_t
+adapt(intmax_t delta, size_t outpos, bool first)
+{
+	intmax_t k;
+
+	delta = (first ? delta / DAMP : delta / 2) + (delta / outpos);
+	for (k = 0; delta > (BASE - TMIN) * TMAX / 2; k += BASE) {
+		delta /= BASE - TMIN;
+	}
+
+	return k + (BASE - TMIN + 1) * delta / (delta + SKEW);
 }
 
 
@@ -194,41 +222,47 @@ tresh(size_t pos)
 static void
 put(char *buf, size_t len, int val)
 {
+	int ch;
+
 	assert(val >= 0 && val <= BASE - 1);
 
 	if (val >= 0 && val <= 9)
-		OUT(buf, len, 0, val + '0');
+		ch = val + '0';
 	else if (val >= 10 && val <= 35)
-		OUT(buf, len, 0, val - 10 + 'A');
+		ch = val - 10 + 'A';
 	else if (val >= 36 && val <= 61)
-		OUT(buf, len, 0, val - 36 + 'a');
+		ch = val - 36 + 'a';
+	else
+		return;
+
+	OUT(buf, len, 0, ch);
 }
 
 
 /*
- * Encode a symbol as base 62.
+ * Encode a delta as base 62.
  */
 
 static size_t
-encode(char *buf, size_t len, intmax_t sym)
+encode(char *buf, size_t len, intmax_t bias, intmax_t delta)
 {
 	size_t pos = 0;
 	int t;
 	imaxdiv_t div;
 
 	while (true) {
-		t = tresh(pos);
-		if (sym < t) {
-			put(buf + pos, satsub(len, pos), (int) sym);
+		t = tresh(pos, bias);
+		if (delta < t) {
+			put(buf + pos, satsub(len, pos), (int) delta);
 			pos++;
 			break;
 		}
 
-		div = imaxdiv(sym - t, BASE - t);
+		div = imaxdiv(delta - t, BASE - t);
 		put(buf + pos, satsub(len, pos), (int) div.rem + t);
 		pos++;
 
-		sym = div.quot;
+		delta = div.quot;
 	}
 
 	return pos;
@@ -325,7 +359,7 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 
 	if (ncodes) {
 		size_t plen, rlen;
-		intmax_t last, sym;
+		intmax_t bias, last, delta;
 		int i, j;
 
 		rlen = plen = encpos;
@@ -354,12 +388,16 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 		if (plen != 0)
 			OUT(enc, enclen, encpos++, '_');
 
-		last = plen == 0 ? -10 * (rlen + 1) : 0;
+		bias = INITIAL_BIAS;
+		last = INITIAL_N * (rlen + 1);
+		if (plen == 0)
+			last -= 10 * (rlen + 1);
 		for (i = 0; i < ncodes; i++) {
-			sym = codes[i].wc * (rlen + 1) + codes[i].pos;
-			encpos += encode(enc + encpos, satsub(enclen, encpos), sym - last);
+			delta = codes[i].wc * (rlen + 1) + codes[i].pos - last;
+			encpos += encode(enc + encpos, satsub(enclen, encpos), bias, delta);
 			rlen++;
 			last = codes[i].wc * (rlen + 1) + codes[i].pos + 1;
+			bias = adapt(delta, rlen, i == 0);
 		}
 
 		if (plen == 0)
@@ -402,6 +440,8 @@ get(const char *buf, size_t len)
 			return *buf - 'A' + 10;
 		else if (*buf >= 'a' && *buf <= 'z')
 			return *buf - 'a' + 36;
+		else
+			return -1;
 	}
 
 	return 0;
@@ -409,24 +449,24 @@ get(const char *buf, size_t len)
 
 
 /*
- * Decode a base 62-encoded symbol.
+ * Decode a base 62-encoded delta.
  */
 
 static size_t
-decode(const char *buf, size_t len, intmax_t *sym)
+decode(const char *buf, size_t len, intmax_t bias, intmax_t *delta)
 {
 	size_t pos = 0;
 	int t, v;
 	intmax_t w = 1;
 
-	*sym = 0;
+	*delta = 0;
 	while (true) {
-		t = tresh(pos);
+		t = tresh(pos, bias);
 		v = get(buf + pos, satsub(len, pos));
 		if (v < 0)
 			return FUNYCODE_ERR;
 
-		*sym += (intmax_t) v * w;
+		*delta += (intmax_t) v * w;
 		w *= BASE - t;
 		pos++;
 
@@ -445,8 +485,8 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 	mbstate_t mbs;
 	wchar_t *wname = NULL, *wbuf = NULL;
 	char *p;
-	size_t namepos = 0, encpos = 0, plen, wnamelen, i;
-	intmax_t last;
+	size_t namepos = 0, encpos = 0, plen, wnamelen, i, len;
+	intmax_t bias, last;
 
 	wnamelen = (namelen > enclen ? namelen : enclen) * 2;
 	wname = malloc(wnamelen * sizeof(wchar_t));
@@ -480,20 +520,19 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 	 * without a prefix can never start with a digit.
 	 */
 
-	last = plen == 0 ? -10 * (namepos + 1) : 0;
-	while (encpos < enclen) {
-		size_t len;
-		intmax_t sym;
+	bias = INITIAL_BIAS;
+	last = INITIAL_N * (namepos + 1);
+	if (plen == 0)
+		last -= 10 * (namepos + 1);
+	for (i = 0; i < enclen - encpos; i += len) {
+		intmax_t delta;
 		imaxdiv_t div;
 
-		len = decode(enc + encpos, satsub(enclen, encpos), &sym);
+		len = decode(enc + encpos + i, satsub(enclen, encpos + i), bias, &delta);
 		if (len == FUNYCODE_ERR)
 			return FUNYCODE_ERR;
 
-		encpos += len;
-		sym += last;
-
-		div = imaxdiv(sym, namepos + 1);
+		div = imaxdiv(delta + last, namepos + 1);
 		if (div.rem < wnamelen) {
 			wmemmove(wname + div.rem + 1, wname + div.rem, wnamelen - div.rem - 1);
 			wname[div.rem] = (wchar_t) div.quot;
@@ -501,6 +540,7 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 
 		namepos++;
 		last = div.quot * (namepos + 1) + div.rem + 1;
+		bias = adapt(delta, namepos, i == 0);
 	}
 
 	/*
