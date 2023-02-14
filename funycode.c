@@ -169,14 +169,6 @@ decompress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 }
 
 
-static bool
-isname(wchar_t wc)
-{
-	return (wc >= L'0' && wc <= L'9') ||
-	       (wc >= L'A' && wc <= L'Z') ||
-	       (wc >= L'a' && wc <= L'z');
-}
-
 static size_t
 satsub(size_t a, size_t b)
 {
@@ -293,13 +285,16 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 
 	/*
 	 * Process all characters in the name, directly outputting all those
-	 * that are valid in the target character set and gathering up all
-	 * that need to be encoded.
+	 * that are valid C symbol characters and gathering up all that need
+	 * to be encoded. In addition, forcibly encode leading digits, to
+	 * ensure we always produce a valid C symbol.
 	 */
 
 	encpos = 0;
 	for (namepos = 0; namepos < namelen; namepos++) {
-		if (isname(wname[namepos])) {
+		if ((wname[namepos] >= L'A' && wname[namepos] <= L'Z') ||
+		    (wname[namepos] >= L'a' && wname[namepos] <= L'z') ||
+		    (wname[namepos] >= L'0' && wname[namepos] <= L'9' && encpos != 0)) {
 			OUT(enc, enclen, encpos++, wctob(wname[namepos]));
 		} else {
 			if (ncodes >= maxcodes) {
