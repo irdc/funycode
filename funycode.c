@@ -54,6 +54,11 @@
 		if (p_ < (len))                                             \
 			(buf)[p_] = v_;                                     \
 	} while (0)
+#define IN(buf, len, pos)                                                   \
+	({                                                                  \
+		size_t p_= (pos);                                           \
+		p_ < (len) ? (buf)[p_] : 0;                                 \
+	})
 
 /*
  * Compress symbols using a simple algorithm based on LSRW1-A. Abuse
@@ -184,23 +189,6 @@ decompress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 	return dstpos;
 }
 
-
-static size_t
-satsub(size_t a, size_t b)
-{
-	return a > b ? a - b : 0;
-}
-
-static intmax_t
-tresh(size_t pos, intmax_t bias)
-{
-	intmax_t t;
-
-	t = (pos + 1) * BASE - bias;
-
-	return t < TMIN ? TMIN : t > TMAX ? TMAX : t;
-}
-
 static intmax_t
 adapt(intmax_t delta, size_t outpos, bool first)
 {
@@ -216,26 +204,40 @@ adapt(intmax_t delta, size_t outpos, bool first)
 
 
 /*
- * Encode val as a base 62 digit.
+ * Check if a character is to be encoded. Digits are only encoded if they
+ * appear before any alphabetical characters.
  */
 
-static void
-put(char *buf, size_t len, int val)
+static bool
+isenc(wchar_t ch, bool first)
 {
-	int ch;
+	if ((ch >= L'A' && ch <= L'Z') ||
+	    (ch >= L'a' && ch <= L'z'))
+		return false;
 
+	if (!first && ch >= L'0' && ch <= L'9')
+		return false;
+
+	return true;
+}
+
+/*
+ * Encode value as a base 62 digit.
+ */
+
+static char
+encode_value(int val)
+{
 	assert(val >= 0 && val <= BASE - 1);
 
 	if (val >= 0 && val <= 9)
-		ch = val + '0';
+		return val + '0';
 	else if (val >= 10 && val <= 35)
-		ch = val - 10 + 'A';
+		return val - 10 + 'A';
 	else if (val >= 36 && val <= 61)
-		ch = val - 36 + 'a';
-	else
-		return;
+		return val - 36 + 'a';
 
-	OUT(buf, len, 0, ch);
+	return 0;
 }
 
 
@@ -243,56 +245,37 @@ put(char *buf, size_t len, int val)
  * Encode a delta as base 62.
  */
 
-static size_t
-encode(char *buf, size_t len, intmax_t bias, intmax_t delta)
+static int
+encode(char *buf, size_t len, size_t pos, intmax_t bias, intmax_t delta)
 {
-	size_t pos = 0;
-	int t;
+	int i;
+	intmax_t t;
 	imaxdiv_t div;
 
-	while (true) {
-		t = tresh(pos, bias);
+	for (i = 0; ; i++) {
+		t = (i + 1) * BASE - bias;
+		t = t < TMIN ? TMIN : t > TMAX ? TMAX : t;
+
 		if (delta < t) {
-			put(buf + pos, satsub(len, pos), (int) delta);
-			pos++;
+			OUT(buf, len, pos + i, encode_value((int) delta));
 			break;
 		}
 
 		div = imaxdiv(delta - t, BASE - t);
-		put(buf + pos, satsub(len, pos), (int) div.rem + t);
-		pos++;
-
+		OUT(buf, len, pos + i, encode_value((int) div.rem + t));
 		delta = div.quot;
 	}
 
-	return pos;
-}
-
-struct code {
-	wchar_t		 wc;
-	size_t		 pos;
-};
-
-static int
-codecmp(const void *a, const void *b)
-{
-	const struct code *ac = a, *bc = b;
-	int cmp;
-
-	cmp = (int) ac->wc - (int) bc->wc;
-	if (cmp == 0)
-		cmp = ac->pos < bc->pos ? -1 : ac->pos > bc->pos ? 1 : 0;
-
-	return cmp;
+	return i + 1;
 }
 
 size_t
 wfunencode(char *enc, size_t enclen, const wchar_t *name, size_t namelen)
 {
 	wchar_t *buf = NULL;
-	size_t namepos, encpos;
-	struct code *codes = NULL;
-	int ncodes = 0, maxcodes = 0;
+	size_t i, encpos, declen;
+	wchar_t n, next;
+	intmax_t bias, last;
 
 	/*
 	 * Compress the input.
@@ -307,97 +290,75 @@ wfunencode(char *enc, size_t enclen, const wchar_t *name, size_t namelen)
 		goto fail;
 
 	/*
-	 * Process all characters in the name, directly outputting all those
-	 * that are valid C symbol characters and gathering up all that need
-	 * to be encoded. In addition, forcibly encode leading digits, to
-	 * ensure we always produce a valid C symbol.
+	 * Directly output all characters that are valid in C symbols. We'll
+	 * encode the rest later on. Note that leading digits always get
+	 * encoded, to ensure we always produce a valid C symbol.
 	 */
 
 	encpos = 0;
-	for (namepos = 0; namepos < namelen; namepos++) {
-		if ((buf[namepos] >= L'A' && buf[namepos] <= L'Z') ||
-		    (buf[namepos] >= L'a' && buf[namepos] <= L'z') ||
-		    (buf[namepos] >= L'0' && buf[namepos] <= L'9' && encpos != 0)) {
-			OUT(enc, enclen, encpos++, wctob(buf[namepos]));
-		} else {
-			if (ncodes >= maxcodes) {
-				struct code *new;
+	for (i = 0; i < namelen; i++)
+		if (!isenc(buf[i], encpos == 0))
+			OUT(enc, enclen, encpos++, wctob(buf[i]));
 
-				maxcodes = maxcodes == 0 ? 4 : maxcodes * 2;
-				new = realloc(codes, maxcodes * sizeof(codes[0]));
-				if (new == NULL)
-					goto fail;
+	if (encpos == namelen)
+		goto done;
 
-				codes = new;
+	/*
+	 * Encode the remaining characters as part of the suffix.
+	 */
+
+	declen = encpos;
+	if (encpos != 0)
+		OUT(enc, enclen, encpos++, '_');
+
+	bias = -1;
+	last = INITIAL_N * (declen + 1);
+	if (encpos == 0)
+		last -= 10;
+
+	for (n = INITIAL_N, next = WCHAR_MAX;
+	     n < WCHAR_MAX;
+	     n = next, next = WCHAR_MAX) {
+		bool first = true;
+		size_t decpos;
+
+		for (i = 0, decpos = 0; i < namelen; i++) {
+			wchar_t ch;
+			intmax_t delta;
+
+			ch = buf[i];
+			if (!isenc(ch, first)) {
+				first = false;
+				decpos++;
+			} else if (ch < n) {
+				decpos++;
+			} else if (ch > n && ch < next) {
+				next = ch;
 			}
 
-			codes[ncodes++] = (struct code) {
-				.wc = buf[namepos],
-				.pos = namepos
-			};
+			if (ch != n)
+				continue;
+
+			delta = ch * (declen + 1) + decpos - last;
+			encpos += encode(enc, enclen, encpos,
+			    bias < 0 ? INITIAL_BIAS : bias, delta);
+
+			last = ch * (++declen + 1) + ++decpos;
+			bias = adapt(delta, declen, bias < 0);
 		}
+
+		if (next == WCHAR_MAX && first)
+			OUT(enc, enclen, encpos++, '_');
 	}
 
+done:
 	free(buf);
-	buf = NULL;
-
-	if (ncodes) {
-		size_t plen, rlen;
-		intmax_t bias, last, delta;
-		int i, j;
-
-		rlen = plen = encpos;
-
-		/*
-		 * Sort all code points to optimise the encoded string and correct
-		 * the insertion position to take insertion order into account.
-		 */
-
-		qsort(codes, ncodes, sizeof(codes[0]), codecmp);
-		for (i = 0; i < ncodes; i++) {
-			size_t ofs = 0;
-
-			for (j = i + 1; j < ncodes; j++)
-				if (codes[j].pos < codes[i].pos)
-					ofs++;
-
-			codes[i].pos -= ofs;
-		}
-
-		/*
-		 * Generate the suffix. If we don't have a prefix, make sure
-		 * the suffix never starts with a digit.
-		 */
-
-		if (plen != 0)
-			OUT(enc, enclen, encpos++, '_');
-
-		bias = INITIAL_BIAS;
-		last = INITIAL_N * (rlen + 1);
-		if (plen == 0)
-			last -= 10 * (rlen + 1);
-		for (i = 0; i < ncodes; i++) {
-			delta = codes[i].wc * (rlen + 1) + codes[i].pos - last;
-			encpos += encode(enc + encpos, satsub(enclen, encpos), bias, delta);
-			rlen++;
-			last = codes[i].wc * (rlen + 1) + codes[i].pos + 1;
-			bias = adapt(delta, rlen, i == 0);
-		}
-
-		if (plen == 0)
-			OUT(enc, enclen, encpos++, '_');
-
-		free(codes);
-		codes = NULL;
-	}
-
 	OUT(enc, enclen, encpos, '\0');
 
 	return encpos;
 
 fail:
 	free(buf);
-	free(codes);
 
 	return FUNYCODE_ERR;
 }
@@ -443,58 +404,53 @@ funencode(char *enc, size_t enclen, const char *name, size_t namelen)
  */
 
 static int
-get(const char *buf, size_t len)
+decode_value(char ch)
 {
-	if (len > 0) {
-		if (*buf >= '0' && *buf <= '9')
-			return *buf - '0';
-		else if (*buf >= 'A' && *buf <= 'Z')
-			return *buf - 'A' + 10;
-		else if (*buf >= 'a' && *buf <= 'z')
-			return *buf - 'a' + 36;
-		else
-			return -1;
-	}
-
-	return 0;
+	if (ch >= '0' && ch <= '9')
+		return ch - '0';
+	else if (ch >= 'A' && ch <= 'Z')
+		return ch - 'A' + 10;
+	else if (ch >= 'a' && ch <= 'z')
+		return ch - 'a' + 36;
+	else
+		return -1;
 }
-
 
 /*
  * Decode a base 62-encoded delta.
  */
 
-static size_t
-decode(const char *buf, size_t len, intmax_t bias, intmax_t *delta)
+static int
+decode(const char *buf, size_t len, size_t pos, intmax_t bias, intmax_t *delta)
 {
-	size_t pos = 0;
-	int t, v;
+	int i, v;
+	intmax_t t;
 	intmax_t w = 1;
 
 	*delta = 0;
-	while (true) {
-		t = tresh(pos, bias);
-		v = get(buf + pos, satsub(len, pos));
+	for (i = 0; ; i++) {
+		t = (i + 1) * BASE - bias;
+		t = t < TMIN ? TMIN : t > TMAX ? TMAX : t;
+
+		v = decode_value(IN(buf, len, pos + i));
 		if (v < 0)
-			return FUNYCODE_ERR;
+			return -1;
 
 		*delta += (intmax_t) v * w;
 		w *= BASE - t;
-		pos++;
 
 		if (v < t)
 			break;
 	}
 
-	return pos;
+	return i + 1;
 }
 
 size_t
 wfundecode(wchar_t *name, size_t namelen, const char *enc, size_t enclen)
 {
-	wchar_t *buf = NULL;
-	char *p;
-	size_t buflen, namepos = 0, encpos = 0, plen, i, len;
+	wchar_t *buf;
+	size_t buflen, namepos, encpos;
 	intmax_t bias, last;
 
 	buflen = namelen > enclen * 2 ? namelen : enclen * 2;
@@ -503,43 +459,44 @@ wfundecode(wchar_t *name, size_t namelen, const char *enc, size_t enclen)
 		goto fail;
 
 	/*
-	 * Split the encoded string into the prefix and suffix (separated by
-	 * an underscore), and output the prefix. Note that strings only
-	 * containing a suffix have the underscore at the end, and strings
-	 * only containing a prefix don't end in an underscore at all.
+	 * Output the unencoded part of the string (the prefix). Note that
+	 * strings only containing an encoded suffix have the underscore at
+	 * the end, and strings only containing a prefix don't contain an
+	 * underscore at all.
 	 */
 
-	p = memchr(enc, '_', enclen);
-	if (p == enc + enclen - 1) {
-		plen = 0;
+	encpos = namepos = 0;
+	if (IN(enc, enclen, enclen - 1) == '_') {
+		/* suffix only */
 		enclen--;
-	} else if (p != NULL) {
-		encpos = p - enc + 1;
-		plen = encpos - 1;
 	} else {
-		encpos = enclen;
-		plen = enclen;
-	}
+		while (encpos < enclen && IN(enc, enclen, encpos) != '_')
+			OUT(buf, buflen, namepos++, IN(enc, enclen, encpos++));
 
-	for (i = 0; i < plen; i++)
-		OUT(buf, buflen, namepos++, enc[i]);
+		if (IN(enc, enclen, encpos) == '_')
+			encpos++;
+	}
 
 	/*
 	 * Insert all encoded characters. Handle the fact that a suffix
 	 * without a prefix can never start with a digit.
 	 */
 
-	bias = INITIAL_BIAS;
+	bias = -1;
 	last = INITIAL_N * (namepos + 1);
-	if (plen == 0)
-		last -= 10 * (namepos + 1);
-	for (i = 0; i < enclen - encpos; i += len) {
+	if (namepos == 0)
+		last -= 10;
+
+	while (encpos < enclen) {
+		int len;
 		intmax_t delta;
 		imaxdiv_t div;
 
-		len = decode(enc + encpos + i, satsub(enclen, encpos + i), bias, &delta);
-		if (len == FUNYCODE_ERR)
-			return FUNYCODE_ERR;
+		len = decode(enc, enclen, encpos,
+		    bias < 0 ? INITIAL_BIAS : bias, &delta);
+		if (len < 0)
+			goto fail;
+		encpos += len;
 
 		div = imaxdiv(delta + last, namepos + 1);
 		if (div.rem < buflen) {
@@ -547,9 +504,8 @@ wfundecode(wchar_t *name, size_t namelen, const char *enc, size_t enclen)
 			buf[div.rem] = (wchar_t) div.quot;
 		}
 
-		namepos++;
-		last = div.quot * (namepos + 1) + div.rem + 1;
-		bias = adapt(delta, namepos, i == 0);
+		last = div.quot * (++namepos + 1) + div.rem + 1;
+		bias = adapt(delta, namepos, bias < 0);
 	}
 
 	/*
