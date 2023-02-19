@@ -78,25 +78,16 @@
 #define MINDIST		1
 #define MAXDIST		((1 << DISTBITS) - 1 + MINDIST)
 
-/* FNV hash (see http://www.isthe.com/chongo/tech/comp/fnv/) */
-#if SIZE_MAX == UINT32_MAX
-# define FNVHASH	uint32_t
-# define FNVBASIS	0x811c9dc5
-# define FNVPRIME	0x01000193
-#else
-# define FNVHASH	uint64_t
-# define FNVBASIS	0xcbf29ce484222325ULL
-# define FNVPRIME	0x100000001b3ULL
-#endif
-
 static int
 hash(const wchar_t *buf)
 {
 	size_t i;
-	FNVHASH h = FNVBASIS;
+	uint64_t h;
 
+	/* FNV-1a hash (see http://www.isthe.com/chongo/tech/comp/fnv/) */
+	h = UINT64_C(0xcbf29ce484222325);
 	for (i = 0; i < MINCOPY - 1; i++)
-		h = (h ^ buf[i]) * FNVPRIME;
+		h = (h ^ buf[i]) * UINT64_C(0x100000001b3);
 
 	return (int) h;
 }
@@ -118,7 +109,7 @@ prefix(const wchar_t *src, size_t srclen, size_t a, size_t b)
 static size_t
 compress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 {
-	size_t srcpos, dstpos, htab[512];
+	size_t srcpos, dstpos, htab[512] = { 0 };
 
 	srcpos = dstpos = 0;
 	while (srcpos + MINCOPY < srclen && srcpos < MINCOPY) {
