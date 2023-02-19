@@ -115,6 +115,9 @@ compress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 	while (srcpos + MINCOPY < srclen && srcpos < MINCOPY) {
 		int h;
 
+		if ((src[srcpos] & ~(COPYMASK | DISTMASK)) == BACKREF)
+			goto fail;
+
 		OUT(dst, dstlen, dstpos, src[srcpos]);
 		h = hash(src + srcpos) % nitems(htab);
 		htab[h] = srcpos++;
@@ -124,6 +127,9 @@ compress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 	while (srcpos + MINCOPY < srclen) {
 		int h;
 		size_t len;
+
+		if ((src[srcpos] & ~(COPYMASK | DISTMASK)) == BACKREF)
+			goto fail;
 
 		h = hash(src + srcpos) % nitems(htab);
 		if (srcpos - htab[h] >= MINDIST &&
@@ -148,10 +154,19 @@ compress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 		}
 	}
 
-	while (srcpos < srclen)
+	while (srcpos < srclen) {
+		if ((src[srcpos] & ~(COPYMASK | DISTMASK)) == BACKREF)
+			goto fail;
+
 		OUT(dst, dstlen, dstpos++, src[srcpos++]);
+	}
 
 	return dstpos;
+
+fail:
+	errno = EILSEQ;
+
+	return FUNYCODE_ERR;
 }
 
 static size_t
