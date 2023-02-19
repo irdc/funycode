@@ -6,7 +6,7 @@ OBJS	= $(SRCS:.c=.o)
 all: funyfilt funycode.so
 
 funycode.so: funycode.o
-	$(CC) $(LDFLAGS) -shared -o $@ $^
+	$(CC) $(LDFLAGS) -shared -o $@ funycode.o
 
 funyfilt: $(OBJS)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS)

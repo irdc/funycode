@@ -17,6 +17,7 @@
 #include "funycode.h"
 
 #include <stdio.h>
+#include <stdint.h>
 #include <locale.h>
 #include <unistd.h>
 #include <err.h>
