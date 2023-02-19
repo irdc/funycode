@@ -372,7 +372,7 @@ size_t
 funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
     locale_t loc)
 {
-	mbstate_t mbs;
+	mbstate_t mbs = { 0 };
 	wchar_t *wname;
 	size_t len;
 
@@ -380,7 +380,6 @@ funencode_l(char *enc, size_t enclen, const char *name, size_t namelen,
 	if (wname == NULL)
 		goto fail;
 
-	memset(&mbs, '\0', sizeof(mbs));
 	namelen = mbsnrtowcs(wname, &name, namelen, namelen, &mbs);
 	if (namelen == (size_t) -1)
 		goto fail;
@@ -536,7 +535,7 @@ size_t
 fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
     locale_t loc)
 {
-	mbstate_t mbs;
+	mbstate_t mbs = { 0 };
 	wchar_t *wname, *p;
 	size_t wnamelen, wlen, len;
 
@@ -549,7 +548,6 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 	if (wlen == FUNYCODE_ERR)
 		goto fail;
 
-	memset(&mbs, '\0', sizeof(mbs));
 	p = wname;
 	len = wcsnrtombs(NULL, (const wchar_t **) &p, wlen, 0, &mbs);
 
