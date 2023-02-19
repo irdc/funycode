@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022 Willemijn Coene
+ * Copyright (c) 2022, 2023 Willemijn Coene
  *
  * Permission to use, copy, modify, and distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -17,14 +17,10 @@
 #include "funycode.h"
 
 #include <stdio.h>
-#include <string.h>
 #include <locale.h>
 #include <unistd.h>
 #include <err.h>
 #include <stdlib.h>
-#include <stdint.h>
-
-#define nitems(arr)	(sizeof(arr) / sizeof((arr)[0]))
 
 int
 main(int argc, char *const *argv)
