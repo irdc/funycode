@@ -111,19 +111,7 @@ compress(wchar_t *dst, size_t dstlen, const wchar_t *src, size_t srclen)
 	size_t srcpos, dstpos, htab[512] = { 0 };
 
 	srcpos = dstpos = 0;
-	while (srcpos + MINCOPY < srclen && srcpos < MINCOPY) {
-		int h;
-
-		if ((src[srcpos] & ~(COPYMASK | DISTMASK)) == BACKREF)
-			goto fail;
-
-		OUT(dst, dstlen, dstpos, src[srcpos]);
-		h = hash(src + srcpos) % nitems(htab);
-		htab[h] = srcpos++;
-		dstpos++;
-	}
-
-	while (srcpos + MINCOPY < srclen) {
+	while (srcpos + (MINCOPY - 1) < srclen) {
 		int h;
 		size_t len;
 
