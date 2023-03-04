@@ -537,10 +537,13 @@ fundecode_l(char *name, size_t namelen, const char *enc, size_t enclen,
 		goto fail;
 
 	p = wname;
-	len = wcsnrtombs(NULL, (const wchar_t **) &p, wlen, 0, &mbs);
+	len = wcsnrtombs(NULL, (const wchar_t **) &p,
+	    wnamelen < wlen ? wnamelen : wlen, 0, &mbs);
 
 	p = wname;
-	if (wcsnrtombs(name, (const wchar_t **) &p, wlen, namelen, &mbs) == (size_t) -1)
+	if (wcsnrtombs(name, (const wchar_t **) &p,
+		    wnamelen < wlen ? wnamelen : wlen, namelen,
+		    &mbs) == (size_t) -1)
 		goto fail;
 
 	free(wname);

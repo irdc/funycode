@@ -22,3 +22,4 @@ _
  
 std::__1::chrono::system_clock::to_time_t(std::__1::chrono::time_point<std::__1::chrono::system_clock, std::__1::chrono::duration<long long, std::__1::ratio<1ll, 1000000ll> > > const&)
 std::__1::__fs::filesystem::__last_write_time(std::__1::__fs::filesystem::path const&, std::__1::chrono::time_point<std::__1::__fs::filesystem::_FilesystemClock, std::__1::chrono::duration<__int128, std::__1::ratio<1ll, 1000000000ll> > >, std::__1::error_code*)
+std::__1::__money_get<wchar_t>::__gather_info(bool, std::__1::locale const&, std::__1::money_base::pattern&, wchar_t&, wchar_t&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char> >&, std::__1::basic_string<wchar_t, std::__1::char_traits<wchar_t>, std::__1::allocator<wchar_t> >&, std::__1::basic_string<wchar_t, std::__1::char_traits<wchar_t>, std::__1::allocator<wchar_t> >&, std::__1::basic_string<wchar_t, std::__1::char_traits<wchar_t>, std::__1::allocator<wchar_t> >&, int&)
